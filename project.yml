@@ -1,0 +1,68 @@
+# XcodeGen manifest. Run `xcodegen generate` on a Mac to produce Burn.xcodeproj.
+# Keeping the project text-based means it diffs cleanly and never conflicts.
+name: Burn
+
+options:
+  bundleIdPrefix: io.ranadev
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    # The Swift *language mode*, not the compiler version — only 4, 4.2, 5 and 6
+    # are accepted here.
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    # Set your Apple Developer team here (or pick it in Xcode ▸ Signing & Capabilities).
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  Burn:
+    type: application
+    platform: iOS
+    sources:
+      - path: Burn
+    settings:
+      base:
+        PRODUCT_NAME: Burn
+        PRODUCT_BUNDLE_IDENTIFIER: io.ranadev.burn
+        TARGETED_DEVICE_FAMILY: "1" # iPhone
+        ENABLE_PREVIEWS: YES
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Burn
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIUserInterfaceStyle: Dark
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        # Shader source in the binary makes Metal errors point at real lines —
+        # but only worth shipping in Debug.
+        Debug:
+          MTL_ENABLE_DEBUG_INFO: INCLUDE_SOURCE
+
+  BurnTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BurnTests
+    dependencies:
+      - target: Burn
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.ranadev.burn.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Burn:
+    build:
+      targets:
+        Burn: all
+        BurnTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BurnTests
