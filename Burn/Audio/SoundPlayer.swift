@@ -16,6 +16,24 @@ final class SoundPlayer {
     static let burnResource = "burn-crackle"
     static let burnExtension = "wav"
 
+    /// Sits under the room rather than on top of it.
+    static let volume: Float = 0.62
+
+    /// How long after the fire starts the sound should begin.
+    ///
+    /// The clip's attack lands on its first sample, but the flame front needs a
+    /// moment to become visible — the eased curve starts slow — so playing on the
+    /// same frame reads as though the sound arrives before the fire.
+    static let burnLeadIn: TimeInterval = 0.8
+
+    /// `burnLeadIn`, capped to half the burn.
+    ///
+    /// The Reduce Motion burn is only 0.45s long, and a flat 0.8s lead-in would
+    /// schedule the sound for after it had already finished — i.e. silence.
+    static func leadIn(for duration: TimeInterval) -> TimeInterval {
+        min(burnLeadIn, duration * 0.5)
+    }
+
     private var player: AVAudioPlayer?
 
     /// Loads the clip and configures the session. Cheap to call repeatedly.
@@ -34,15 +52,26 @@ final class SoundPlayer {
             return
         }
         player = try? AVAudioPlayer(contentsOf: url)
+        player?.volume = Self.volume
+        // Required before `play(atTime:)` can schedule accurately.
         player?.prepareToPlay()
     }
 
-    func play() {
+    /// Starts the clip, optionally `delay` seconds from now.
+    ///
+    /// Scheduled through `play(atTime:)` on the audio device's own clock rather
+    /// than a `Task.sleep`, so the start lands where it should even if the main
+    /// actor is busy laying out the first frames of the burn.
+    func play(after delay: TimeInterval = 0) {
         prepare()
         guard let player else { return }
         try? AVAudioSession.sharedInstance().setActive(true)
         player.currentTime = 0
-        player.play()
+        if delay > 0 {
+            player.play(atTime: player.deviceCurrentTime + delay)
+        } else {
+            player.play()
+        }
     }
 
     func stop() {

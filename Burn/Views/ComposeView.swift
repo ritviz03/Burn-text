@@ -168,7 +168,10 @@ struct ComposeView: View {
             seed: .random(in: 0..<128)
         )
 
-        if soundEnabled { sound.play() }
+        // The sound comes in a beat after the fire, not with it — see
+        // `SoundPlayer.burnLeadIn`. Haptics stay on the ignition frame: the thump
+        // is the tap's acknowledgement.
+        if soundEnabled { sound.play(after: SoundPlayer.leadIn(for: duration)) }
         if hapticsEnabled { haptics.play(duration: duration) }
     }
 
@@ -181,7 +184,13 @@ struct ComposeView: View {
             try? modelContext.save()
         }
 
-        sound.stop()
+        // Deliberately no `sound.stop()` here. The clip is as long as the burn, so
+        // now that it starts a beat late, stopping on the last frame would cut the
+        // crackle off mid-sound. Letting it ring out over the cleared screen reads
+        // as embers dying down. A burn cannot be interrupted — `ignite()` refuses
+        // while one is in flight — so there is nothing to overlap with, and the
+        // next `play` rewinds the same player anyway.
+        //
         // The haptic pattern is duration-bounded so it has already run out, but
         // stopping releases the player — and actually cuts it short if this burn
         // was interrupted rather than finished.

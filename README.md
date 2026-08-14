@@ -96,6 +96,13 @@ The classic **noise → step → alpha** dissolve, on the GPU:
    continuous rumble with an intensity curve, plus crackle transients) rather
    than streaming per-frame updates, so the rumble keeps time even if the render
    loop stutters.
+6. `SoundPlayer` comes in **`SoundPlayer.burnLeadIn` (0.8s) after** ignition, not
+   with it. The clip's attack is on its first sample but the eased curve starts
+   slow, so playing on the ignition frame sounds like the fire arrives late.
+   Scheduled via `play(atTime:)` on the audio clock, so it lands accurately even
+   while the first frames are laying out. Because the clip is as long as the burn,
+   it is left to ring out past the end rather than being cut off — embers dying
+   down over the cleared screen.
 
 Only pixels that already have ink are burned, which keeps the fire on the
 letters instead of scorching a rectangle around them.
@@ -123,7 +130,10 @@ Run through this once on real hardware:
 - [ ] Tap **Burn**: the keyboard leaves, the text settles, *then* the fire starts.
 - [ ] The front travels across the letters; sparks appear where it is, not elsewhere.
 - [ ] Haptics ramp up and fade with the flame (device only).
-- [ ] Sound plays, and respects the ring/silent switch.
+- [ ] Sound starts a beat *after* the fire, not with the tap, and sits under the
+      room rather than on top of it. Tune with `SoundPlayer.burnLeadIn` and
+      `SoundPlayer.volume`.
+- [ ] Sound respects the ring/silent switch.
 - [ ] The thought lands in **Journal** with a timestamp; swipe deletes it.
 - [ ] Turn **Keep a journal** off — burning saves nothing.
 - [ ] Turn sound and haptics off — the burn is silent and still.
