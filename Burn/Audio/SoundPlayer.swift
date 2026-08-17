@@ -37,7 +37,14 @@ final class SoundPlayer {
     private var player: AVAudioPlayer?
 
     /// Loads the clip and configures the session. Cheap to call repeatedly.
-    func prepare(resource: String = Self.burnResource, withExtension ext: String = Self.burnExtension) {
+    ///
+    /// The defaults are spelled `SoundPlayer.` rather than `Self.`: a default
+    /// argument is evaluated at the call site, where the dynamic `Self` of a class
+    /// is not known, so the compiler rejects it — `final` makes no difference.
+    func prepare(
+        resource: String = SoundPlayer.burnResource,
+        withExtension ext: String = SoundPlayer.burnExtension
+    ) {
         // `.ambient` keeps the app polite: it obeys the ring/silent switch and
         // mixes with whatever the user is already listening to instead of
         // stopping it. Mixing is implicit in this category — passing
