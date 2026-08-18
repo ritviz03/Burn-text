@@ -5,11 +5,19 @@
 import SwiftData
 import SwiftUI
 
-/// One thought, one button.
+/// Write a thought, then burn it with a match you drag across the words.
 ///
-/// The whole app lives here: write, tap Burn, watch it go. There is no submit
-/// step — what you type is already what is on screen, sized to fill it.
+/// Two modes, because a keyboard and a drag gesture cannot share a screen: in
+/// **Write** the field is focused and the match rests at the bottom; in **Burn**
+/// the keyboard goes away, the text is drawn character by character, and the match
+/// follows your finger.
+///
+/// Nothing here is on a timer. The fire is a function of where the flame has been,
+/// so a frame loop advances `FireModel` and the view simply draws whatever state
+/// it is in.
 struct ComposeView: View {
+    private enum Mode { case writing, burning }
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -18,200 +26,266 @@ struct ComposeView: View {
     @AppStorage(Setting.keepsJournal) private var keepsJournal = true
 
     @State private var text = ""
-    @State private var burn: BurnRun?
+    @State private var mode: Mode = .writing
+    @State private var fire = FireModel()
+    @State private var layout = GlyphLayout()
+    @State private var fontSize: CGFloat = 44
+    @State private var textOrigin: CGPoint = .zero
+    @State private var box: CGSize = .zero
+    /// Where the flame is, in `box` coordinates. `nil` when nothing is touching.
+    @State private var flame: CGPoint?
+    @State private var phase: Double = 0
+    @State private var hasDragged = false
     @State private var haptics = BurnHaptics()
     @State private var sound = SoundPlayer()
     @FocusState private var isWriting: Bool
 
-    /// Shared by the editor and the burning copy, so the type does not jump when
-    /// the fire takes over.
+    /// Shared by the editor and the burning copy, so the type does not jump.
     private let fitter = FontFitter()
 
-    private static let prompt = "What's weighing on you?"
+    static let prompt = "burn negative thought"
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// With nothing typed, the prompt itself is what burns — the quickest way to
+    /// learn the gesture. It is never journalled; it was not anybody's thought.
+    private var isPlaceholder: Bool { trimmed.isEmpty }
+    private var displayText: String { isPlaceholder ? Self.prompt : trimmed }
 
     var body: some View {
-        VStack(spacing: 0) {
-            canvas
-            burnButton
+        ZStack {
+            background
+            page
         }
-        .background(background)
-        .onAppear(perform: warmUp)
-        // Cancelled automatically if a new burn starts or the view goes away.
-        .task(id: burn?.id) {
-            guard let run = burn else { return }
-            do {
-                try await Task.sleep(for: .seconds(run.duration))
-            } catch {
-                return
-            }
-            finish(run)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { modeToggle } }
+        .onAppear {
+            warmUp()
+            isWriting = true
         }
+        .task(id: mode) { await run() }
     }
 
-    // MARK: - Pieces
+    // MARK: - Page
 
-    private var canvas: some View {
-        ZStack {
-            if let burn {
-                BurnView(
-                    text: burn.text,
-                    startedAt: burn.startedAt,
-                    duration: burn.duration,
-                    seed: burn.seed,
-                    fitter: fitter,
-                    reducesMotion: reduceMotion
-                )
-            } else {
-                editor
+    private var page: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                switch mode {
+                case .writing: editor
+                case .burning: burnStage
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .contentShape(Rectangle())
+            .onChange(of: proxy.size, initial: true) { _, size in
+                box = size
+                relayout()
             }
         }
         .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // Tapping anywhere on the page starts writing.
-            if burn == nil { isWriting = true }
-        }
     }
 
     private var editor: some View {
-        GeometryReader { proxy in
-            let size = fitter.fittedSize(for: text, in: proxy.size)
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                TextField(Self.prompt, text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(fitter.swiftUIFont(ofSize: size))
-                    .multilineTextAlignment(.center)
-                    .focused($isWriting)
-                    .tint(.orange)
-                Spacer(minLength: 0)
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            TextField(Self.prompt, text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(fitter.swiftUIFont(ofSize: fontSize))
+                .foregroundStyle(BurnPalette.ink)
+                .multilineTextAlignment(.center)
+                .focused($isWriting)
+                .tint(.orange)
+                .onChange(of: text) { _, _ in relayout() }
+            Spacer(minLength: 0)
         }
+        .frame(width: box.width, height: box.height)
+        .contentShape(Rectangle())
+        .onTapGesture { isWriting = true }
     }
 
-    private var burnButton: some View {
-        Button(action: ignite) {
-            Label("Burn", systemImage: "flame.fill")
-                .font(.headline)
-                .foregroundStyle(canBurn ? Color.white : Color.secondary)
-                .padding(.vertical, 17)
-                .frame(maxWidth: .infinity)
-                .background(Capsule().fill(buttonFill))
+    private var burnStage: some View {
+        ZStack(alignment: .topLeading) {
+            BurnCanvas(
+                layout: layout,
+                fire: fire,
+                font: fitter.swiftUIFont(ofSize: fontSize),
+                origin: textOrigin
+            )
+            .frame(width: box.width, height: box.height)
+
+            MatchStick(phase: phase, isLit: true)
+                .allowsHitTesting(false)
+                .position(MatchStick.centre(forTipAt: flame ?? restingTip))
+                .animation(flame == nil ? .easeOut(duration: 0.45) : nil, value: flame == nil)
+
+            if !hasDragged {
+                hint
+            }
+        }
+        .frame(width: box.width, height: box.height)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    hasDragged = true
+                    // Hold the flame above the fingertip: a hand covers whatever
+                    // it touches, and you need to see the word going.
+                    flame = CGPoint(x: value.location.x, y: value.location.y - MatchStick.reach)
+                }
+                .onEnded { _ in flame = nil }
+        )
+    }
+
+    private var hint: some View {
+        Text("drag the match across your words")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(width: box.width)
+            .position(x: box.width / 2, y: max(box.height - 132, 24))
+            .transition(.opacity)
+            .allowsHitTesting(false)
+    }
+
+    /// Where the match sits when nobody is holding it.
+    private var restingTip: CGPoint {
+        CGPoint(x: box.width / 2, y: max(box.height - 58, 0))
+    }
+
+    private var modeToggle: some View {
+        Button {
+            switch mode {
+            case .writing:
+                isWriting = false
+                hasDragged = false
+                relayout()
+                fire.reset(glyphCount: layout.glyphs.count)
+                mode = .burning
+            case .burning:
+                stopFeedback()
+                flame = nil
+                fire.reset(glyphCount: layout.glyphs.count)
+                mode = .writing
+                isWriting = true
+            }
+        } label: {
+            // Labelled with the mode you are going to, as in the reference.
+            Text(mode == .writing ? "Burn" : "Write")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(.white))
         }
         .buttonStyle(.plain)
-        .disabled(!canBurn)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 8)
-        // Get out of the way while the page is burning.
-        .opacity(burn == nil ? 1 : 0)
-        .animation(.easeOut(duration: 0.35), value: burn == nil)
-    }
-
-    private var buttonFill: LinearGradient {
-        LinearGradient(
-            colors: canBurn
-                ? [Color(red: 1.00, green: 0.44, blue: 0.10), Color(red: 0.82, green: 0.14, blue: 0.04)]
-                : [Color.white.opacity(0.08), Color.white.opacity(0.05)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
     }
 
     private var background: some View {
         LinearGradient(
-            colors: [Color(red: 0.05, green: 0.04, blue: 0.05), Color(red: 0.11, green: 0.05, blue: 0.03)],
+            colors: [Color(red: 0.05, green: 0.04, blue: 0.05), Color(red: 0.09, green: 0.05, blue: 0.04)],
             startPoint: .top,
             endPoint: .bottom
         )
         .ignoresSafeArea()
     }
 
-    // MARK: - Burning
+    // MARK: - Layout
 
-    private var trimmed: String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func relayout() {
+        guard box.width > 1, box.height > 1 else { return }
+        let size = fitter.fittedSize(for: displayText, in: box)
+        let laid = GlyphLayout.make(
+            text: displayText,
+            font: fitter.font(ofSize: size),
+            maxWidth: box.width
+        )
+        fontSize = size
+        layout = laid
+        textOrigin = CGPoint(x: 0, y: max((box.height - laid.size.height) / 2, 0))
+        fire.resize(glyphCount: laid.glyphs.count)
     }
 
-    private var canBurn: Bool {
-        !trimmed.isEmpty && burn == nil
+    // MARK: - The frame loop
+
+    /// Advances the fire while in Burn mode, and closes the burn out when the last
+    /// character goes. Cancelled automatically when the mode changes or the view
+    /// disappears.
+    private func run() async {
+        guard mode == .burning else { return }
+
+        var last = Date.now
+        /// Counts down once everything has burned, so the embers get to finish.
+        var settling: Double?
+
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else { return }
+
+            let now = Date.now
+            let dt = now.timeIntervalSince(last)
+            last = now
+            guard dt > 0 else { continue }
+
+            phase += dt
+            fire.tick(dt: dt, flame: flame, layout: layout, reduceMotion: reduceMotion)
+            updateFeedback()
+
+            if settling == nil, fire.hasBurnedEverything(in: layout) {
+                record()
+                settling = reduceMotion ? 0.25 : 0.9
+            }
+            if var remaining = settling {
+                remaining -= dt
+                if remaining <= 0 {
+                    finish()
+                    return
+                }
+                settling = remaining
+            }
+        }
     }
+
+    // MARK: - Feedback
 
     private func warmUp() {
         if hapticsEnabled { haptics.prepare() }
         if soundEnabled { sound.prepare() }
     }
 
-    private func ignite() {
-        let thought = trimmed
-        guard !thought.isEmpty, burn == nil else { return }
-
-        // Put the keyboard away first. The paragraph re-fits as the screen opens
-        // up, and it should settle before the fire touches it — which also gives
-        // the tap a beat of anticipation.
-        isWriting = false
-        Task {
-            try? await Task.sleep(for: .milliseconds(300))
-            start(thought)
-        }
+    /// Fire is open-ended now, so the rumble and the crackle are held at a level
+    /// that tracks how much is alight rather than played as a fixed pattern.
+    private func updateFeedback() {
+        let alight = min(Double(fire.burningCount) / 9.0, 1.0)
+        if hapticsEnabled { haptics.setLevel(alight) } else { haptics.setLevel(0) }
+        if soundEnabled { sound.setLevel(alight) } else { sound.setLevel(0) }
     }
 
-    private func start(_ thought: String) {
-        guard burn == nil else { return }
-
-        let duration = reduceMotion ? BurnCurve.reducedMotionDuration : BurnCurve.duration
-        burn = BurnRun(
-            text: thought,
-            startedAt: .now,
-            duration: duration,
-            seed: .random(in: 0..<128)
-        )
-
-        // The sound comes in a beat after the fire, not with it — see
-        // `SoundPlayer.burnLeadIn`. Haptics stay on the ignition frame: the thump
-        // is the tap's acknowledgement.
-        if soundEnabled { sound.play(after: SoundPlayer.leadIn(for: duration)) }
-        if hapticsEnabled { haptics.play(duration: duration) }
-    }
-
-    private func finish(_ run: BurnRun) {
-        // A newer burn may have replaced this one.
-        guard burn?.id == run.id else { return }
-
-        if keepsJournal {
-            modelContext.insert(ReleasedThought(text: run.text, releasedAt: run.startedAt))
-            try? modelContext.save()
-        }
-
-        // Deliberately no `sound.stop()` here. The clip is as long as the burn, so
-        // now that it starts a beat late, stopping on the last frame would cut the
-        // crackle off mid-sound. Letting it ring out over the cleared screen reads
-        // as embers dying down. A burn cannot be interrupted — `ignite()` refuses
-        // while one is in flight — so there is nothing to overlap with, and the
-        // next `play` rewinds the same player anyway.
-        //
-        // The haptic pattern is duration-bounded so it has already run out, but
-        // stopping releases the player — and actually cuts it short if this burn
-        // was interrupted rather than finished.
+    private func stopFeedback() {
         haptics.stop()
-        // No animation needed: by now every pixel of the text is already gone.
-        text = ""
-        burn = nil
+        sound.stop()
     }
 
-    /// A burn in flight.
-    private struct BurnRun: Identifiable {
-        let id = UUID()
-        let text: String
-        let startedAt: Date
-        let duration: TimeInterval
-        let seed: Double
+    // MARK: - Finishing
+
+    private func record() {
+        guard keepsJournal, !isPlaceholder else { return }
+        modelContext.insert(ReleasedThought(text: displayText, releasedAt: .now))
+        try? modelContext.save()
+    }
+
+    private func finish() {
+        stopFeedback()
+        flame = nil
+        text = ""
+        mode = .writing
+        relayout()
+        fire.reset(glyphCount: layout.glyphs.count)
+        isWriting = true
     }
 }
 
 #Preview {
-    ComposeView()
-        .modelContainer(for: ReleasedThought.self, inMemory: true)
-        .preferredColorScheme(.dark)
+    NavigationStack {
+        ComposeView()
+    }
+    .modelContainer(for: ReleasedThought.self, inMemory: true)
+    .preferredColorScheme(.dark)
 }

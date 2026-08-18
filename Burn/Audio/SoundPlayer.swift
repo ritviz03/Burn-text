@@ -4,7 +4,11 @@
 
 import AVFoundation
 
-/// Crackle and whoosh under the burn.
+/// Crackle under the fire, held at a level rather than played as a one-shot.
+///
+/// The burn has no fixed length any more — it lasts as long as there is something
+/// alight — so the clip loops and its volume tracks how much is burning. It fades
+/// out when the last character goes rather than cutting off.
 ///
 /// Created and driven from the main thread by `ComposeView`.
 final class SoundPlayer {
@@ -18,23 +22,16 @@ final class SoundPlayer {
 
     /// Sits under the room rather than on top of it.
     static let volume: Float = 0.62
-
-    /// How long after the fire starts the sound should begin.
-    ///
-    /// The clip's attack lands on its first sample, but the flame front needs a
-    /// moment to become visible — the eased curve starts slow — so playing on the
-    /// same frame reads as though the sound arrives before the fire.
-    static let burnLeadIn: TimeInterval = 0.8
-
-    /// `burnLeadIn`, capped to half the burn.
-    ///
-    /// The Reduce Motion burn is only 0.45s long, and a flat 0.8s lead-in would
-    /// schedule the sound for after it had already finished — i.e. silence.
-    static func leadIn(for duration: TimeInterval) -> TimeInterval {
-        min(burnLeadIn, duration * 0.5)
-    }
+    /// Level below which the fire counts as out.
+    static let silence: Double = 0.001
+    /// Even one smouldering letter should be audible, so the level maps onto
+    /// `floor...1` rather than `0...1`.
+    static let floorLevel: Float = 0.35
+    static let fadeOut: TimeInterval = 0.35
 
     private var player: AVAudioPlayer?
+    private var isRunning = false
+    private var fade: Task<Void, Never>?
 
     /// Loads the clip and configures the session. Cheap to call repeatedly.
     ///
@@ -59,30 +56,56 @@ final class SoundPlayer {
             return
         }
         player = try? AVAudioPlayer(contentsOf: url)
-        player?.volume = Self.volume
-        // Required before `play(atTime:)` can schedule accurately.
+        player?.numberOfLoops = -1
+        player?.volume = 0
         player?.prepareToPlay()
     }
 
-    /// Starts the clip, optionally `delay` seconds from now.
-    ///
-    /// Scheduled through `play(atTime:)` on the audio device's own clock rather
-    /// than a `Task.sleep`, so the start lands where it should even if the main
-    /// actor is busy laying out the first frames of the burn.
-    func play(after delay: TimeInterval = 0) {
+    /// Holds the crackle at `level` (0...1). Safe to call every frame.
+    func setLevel(_ level: Double) {
+        let level = min(max(level, 0), 1)
+
+        guard level > Self.silence else {
+            fadeOutAndPause()
+            return
+        }
+
         prepare()
         guard let player else { return }
-        try? AVAudioSession.sharedInstance().setActive(true)
-        player.currentTime = 0
-        if delay > 0 {
-            player.play(atTime: player.deviceCurrentTime + delay)
-        } else {
+
+        fade?.cancel()
+        fade = nil
+
+        if !isRunning {
+            try? AVAudioSession.sharedInstance().setActive(true)
+            player.currentTime = 0
             player.play()
+            isRunning = true
         }
+
+        let scaled = Self.floorLevel + (1 - Self.floorLevel) * Float(level)
+        // Assigned rather than ramped, so it overrides any fade still in flight.
+        player.volume = Self.volume * scaled
     }
 
+    /// Stops immediately, without a fade. For leaving the screen.
     func stop() {
+        fade?.cancel()
+        fade = nil
+        isRunning = false
         player?.stop()
         player?.currentTime = 0
+        player?.volume = 0
+    }
+
+    private func fadeOutAndPause() {
+        guard isRunning, fade == nil, let player else { return }
+        isRunning = false
+        player.setVolume(0, fadeDuration: Self.fadeOut)
+        fade = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.fadeOut + 0.05))
+            guard !Task.isCancelled else { return }
+            player.pause()
+        }
     }
 }

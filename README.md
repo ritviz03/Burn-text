@@ -1,18 +1,19 @@
 # Burn
 
-An iOS app for letting go of a thought. Write down what's weighing on you, watch
-it fill the screen, then tap **Burn** and watch it actually burn — a fire front
-eats across the letters, embers lift off, the phone rumbles, and it's gone.
+An iOS app for letting go of a thought. Write down what's weighing on you, then
+drag a lit match across the words and burn them — letter by letter, wherever you
+touch. Characters go white-hot, char, and lift away as embers; the phone rumbles
+under your finger.
 
-The burn is the whole point, so it gets the most engineering attention: a real
-Metal shader, not a fade.
+The burn is the whole point, so it gets the most engineering attention: the fire
+follows your hand rather than playing a canned animation.
 
 ---
 
 ## Requirements
 
 - macOS with **Xcode 15+**
-- **iOS 17+** target (needed for SwiftUI Metal shader modifiers *and* SwiftData)
+- **iOS 17+** target (needed for SwiftData and the SwiftUI APIs used here)
 - A **physical device** to feel the haptics — they are silent on the Simulator
 - No third-party dependencies. Everything is first-party Apple frameworks.
 
@@ -40,8 +41,8 @@ Then set your team under **Signing & Capabilities** (or fill in
 4. Drag the `Burn/` folder into the project (Create groups, add to the `Burn` target)
 5. Drag `BurnTests/` into a new **Unit Testing Bundle** target
 
-Check that `Burn.metal` landed in **Build Phases ▸ Compile Sources** and
-`burn-crackle.wav` and `Assets.xcassets` in **Copy Bundle Resources**.
+Check that `burn-crackle.wav` and `Assets.xcassets` landed in **Copy Bundle
+Resources**.
 
 </details>
 
@@ -57,103 +58,103 @@ Burn/
 ├─ RootView.swift             the one screen, plus journal + settings sheets
 ├─ Models/ReleasedThought     @Model — text + timestamp, on device only
 ├─ Views/
-│  ├─ ComposeView             write, tap Burn, run the burn, save, reset
-│  ├─ BurnView                one clock → shader progress + ember field
+│  ├─ ComposeView             Write/Burn modes, the frame loop, the drag
+│  ├─ BurnCanvas              draws every character at its own heat, plus embers
+│  ├─ MatchStick              the draggable match; FlameShape
 │  ├─ JournalView             what's been let go; swipe to delete
 │  └─ SettingsView            sound, haptics, keep-a-journal, clear
 ├─ Components/
 │  ├─ FontFitter              measures + binary searches the largest fitting size
-│  ├─ AutoSizingText          draws text at that size
-│  └─ EmberParticles          sparks and smoke, one Canvas pass
-├─ Effects/
-│  ├─ Burn.metal              the dissolve shader
-│  ├─ BurnField.swift         Swift mirror of the shader's constants
-│  └─ BurnCurve.swift         duration + easing of the 0…1 timeline
-├─ Haptics/BurnHaptics        one CHHapticPattern, handed over at ignition
-├─ Audio/SoundPlayer          AVAudioPlayer, `.ambient` session
+│  └─ GlyphLayout             per-character frames, with word wrapping
+├─ Effects/FireModel          per-glyph heat + ember simulation; SplitMix64
+├─ Haptics/BurnHaptics        looped continuous pattern, modulated live
+├─ Audio/SoundPlayer          looping crackle, volume tracks how much is alight
 └─ Resources/                 asset catalog + burn-crackle.wav
 ```
 
 ## How the burn works
 
-The classic **noise → step → alpha** dissolve, on the GPU:
+There is no timeline. The fire depends on where the flame has *been* — a path, not
+a clock — so the app keeps a simulation and advances it every frame.
 
 1. `FontFitter` picks the largest point size at which the thought still fits the
    screen. `Text.minimumScaleFactor` only shrinks type; a short thought should
    also *grow*, so we measure candidates and binary search.
-2. `TimelineView(.animation)` ticks every frame. Elapsed time becomes one eased
-   `progress` value from 0 to 1 (`BurnCurve`).
-3. `Burn.metal` builds a noise field over the view — four octaves of value noise,
-   biased left-to-right so the page catches at a corner and a front travels
-   across it. Per pixel it compares the field against an advancing threshold:
-   - **behind the front** → fully transparent (ash)
-   - **inside the band** → white-hot, then ember orange, then char
-   - **ahead of it** → the original ink, untouched
-4. `EmberParticles` draws sparks and smoke from the *same* progress value, using
-   `BurnField.ignition(x:y:)` — the Swift mirror of the shader's sweep — so
-   sparks light up where the fire actually is.
-5. `BurnHaptics` hands CoreHaptics one pre-built pattern at ignition (a
-   continuous rumble with an intensity curve, plus crackle transients) rather
-   than streaming per-frame updates, so the rumble keeps time even if the render
-   loop stutters.
-6. `SoundPlayer` comes in **`SoundPlayer.burnLeadIn` (0.8s) after** ignition, not
-   with it. The clip's attack is on its first sample but the eased curve starts
-   slow, so playing on the ignition frame sounds like the fire arrives late.
-   Scheduled via `play(atTime:)` on the audio clock, so it lands accurately even
-   while the first frames are laying out. Because the clip is as long as the burn,
-   it is left to ring out past the end rather than being cut off — embers dying
-   down over the cleared screen.
+2. `GlyphLayout` lays the text out one character at a time at that size, wrapping
+   greedily by word, and hands back a frame for every character. `Text` cannot
+   tell you where its glyphs are — it draws a paragraph as one block — and the app
+   has to answer "what is the flame touching?" sixty times a second.
+3. Dragging moves a flame point, held **`MatchStick.reach` above the fingertip**:
+   a hand covers whatever it touches, and you need to see the word you are about
+   to lose.
+4. `FireModel.tick` heats every character within `ignitionRadius` of the flame,
+   with a smoothstep falloff so the centre burns fastest. Past `selfSustain` a
+   character is alight and **keeps burning without the flame** — otherwise letting
+   go would leave half-lit characters stuck orange forever.
+5. `BurnCanvas` draws each character at its own heat: ink → white-hot → amber →
+   ember → char, fading and lifting only over the last stretch so you can still
+   read what is going. A blurred additive pass underneath is what makes hot
+   characters look *lit* rather than merely orange. Embers are drawn in the same
+   pass.
+6. `BurnHaptics` loops one short continuous pattern and modulates its strength
+   with a dynamic parameter, so the rumble tracks how much is alight while staying
+   on CoreHaptics' own clock. `SoundPlayer` loops the crackle the same way and
+   fades out when the last character goes.
+7. When every non-whitespace character is consumed, the thought is recorded and
+   the page resets to the prompt. Embers get ~0.9s to finish first.
 
-Only pixels that already have ink are burned, which keeps the fire on the
-letters instead of scorching a rectangle around them.
+Whitespace is laid out but never drawn or burned — setting fire to a space should
+not count as progress, and requiring it would mean a burn never completes.
+
+With nothing typed, the prompt itself is what burns. It is the quickest way to
+learn the gesture, and it is never journalled: it was not anybody's thought.
 
 ### Tuning knobs
 
 | What | Where |
 |---|---|
-| Burn length | `BurnCurve.duration` |
-| Easing | `BurnCurve.progress(elapsed:duration:)` |
-| Front direction / raggedness | `kBurnSweepX`, `kBurnSweepY`, `kBurnSweepWeight` in `Burn.metal` |
-| Glow band width | `BurnField.edgeBand` |
-| Flame colours | `whiteHot` / `ember` / `charred` in `Burn.metal` |
-| Spark count and behaviour | `EmberParticles.count`, `ember(index:seed:)` |
+| Flame size / how much it catches at once | `FireModel.ignitionRadius` |
+| How fast a character catches | `FireModel.heatRate`, `.selfSustain` |
+| How long it takes to burn away | `FireModel.burnRate` |
+| Spark and smoke density | `FireModel.emberRate`, `.emberLimit` |
+| Flame colours | `BurnPalette` in `BurnCanvas.swift` |
+| Match size, flame reach above the finger | `MatchStick.size`, `.reach` |
+| Flame silhouette | `FlameShape.rise` / `.fall` |
 | Type size range | `FontFitter.minimumSize` / `.maximumSize` |
-
-`BurnField.swift` and the `constant` block at the top of `Burn.metal` describe
-the same field. Change one, change the other.
+| Sound level | `SoundPlayer.volume`, `.floorLevel` |
 
 ## Verify it on device
 
 Run through this once on real hardware:
 
 - [ ] Type one word — the type grows big. Type a paragraph — it steps down to fit.
-- [ ] Tap **Burn**: the keyboard leaves, the text settles, *then* the fire starts.
-- [ ] The front travels across the letters; sparks appear where it is, not elsewhere.
-- [ ] Haptics ramp up and fade with the flame (device only).
-- [ ] Sound starts a beat *after* the fire, not with the tap, and sits under the
-      room rather than on top of it. Tune with `SoundPlayer.burnLeadIn` and
-      `SoundPlayer.volume`.
-- [ ] Sound respects the ring/silent switch.
-- [ ] The thought lands in **Journal** with a timestamp; swipe deletes it.
+- [ ] Tap **Burn**: the keyboard leaves and the match appears at the bottom.
+- [ ] Drag across a word. Characters under the flame go hot and burn away; the ones
+      you missed stay put.
+- [ ] The flame sits *above* your fingertip, so you can see what you are burning.
+- [ ] Let go mid-burn — lit characters finish burning on their own.
+- [ ] Sparks come off the characters that are actually alight, not the whole page.
+- [ ] Haptics track how much is burning and stop when it is out (device only).
+- [ ] Sound loops while burning, fades when it stops, sits under the room, and
+      respects the ring/silent switch.
+- [ ] Burn everything → the thought lands in **Journal** and the prompt returns.
+- [ ] Burn the prompt itself without typing → nothing is journalled.
+- [ ] Tap **Write** mid-burn — the fire resets and the keyboard comes back.
 - [ ] Turn **Keep a journal** off — burning saves nothing.
 - [ ] Turn sound and haptics off — the burn is silent and still.
-- [ ] Settings ▸ **Reduce Motion** on → a quick fade, no shader, no sparks.
+- [ ] Settings ▸ **Reduce Motion** on → text still burns, no flying embers.
 
-Unit tests (`⌘U`) cover the font-fitting search, the burn easing, the ignition
-field, and SwiftData save/delete. The effect itself is verified by eye.
+Unit tests (`⌘U`) cover the wrapping and centring in `GlyphLayout`, the whole
+`FireModel` simulation (ignition, self-sustain, spread limits, ember caps, frame
+clamping), the font-fitting search, and SwiftData save/delete. How it *looks* is
+verified by eye.
 
-### If the text doesn't dissolve cleanly
+### Performance note
 
-The one genuinely uncertain piece is applying an alpha-erasing `colorEffect`
-directly to `Text`. `BurnView` calls `.drawingGroup()` first to flatten the
-glyphs into a single layer, which is normally enough. If you see the text
-disappear all at once, not at all, or with per-glyph seams, render it to an
-image and dissolve that instead — same shader, more predictable compositing:
-
-```swift
-// In BurnView.dissolving(progress:), replace AutoSizingText + .drawingGroup()
-// with an ImageRenderer snapshot taken once when the burn starts.
-```
+`BurnCanvas` resolves one `Text` per visible character per frame. For thoughts of
+a sentence or two that is comfortable, and it buys per-character colour for free.
+If a very long paragraph ever drops frames, cache the resolved text per
+(character, quantised heat) rather than resolving every frame.
 
 ## Generated assets
 
