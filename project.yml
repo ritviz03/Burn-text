@@ -28,12 +28,21 @@ targets:
         PRODUCT_NAME: Burn
         PRODUCT_BUNDLE_IDENTIFIER: io.ranadev.burn
         TARGETED_DEVICE_FAMILY: "1" # iPhone
+        # Bump MARKETING_VERSION for each App Store release; CURRENT_PROJECT_VERSION
+        # (the build number) needs to go up on every App Store Connect upload, even
+        # for the same marketing version — TestFlight rejects a repeat.
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
         ENABLE_PREVIEWS: YES
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Burn
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIUserInterfaceStyle: Dark
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        # The app makes no network calls at all, so it truly qualifies for the
+        # encryption exemption — this pre-answers export compliance instead of
+        # Xcode asking at every archive/upload.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
       configs:
