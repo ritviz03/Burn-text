@@ -225,7 +225,9 @@ struct ComposeView: View {
             guard dt > 0 else { continue }
 
             phase += dt
-            fire.tick(dt: dt, flame: flame, layout: layout, reduceMotion: reduceMotion)
+            // `origin` translates `layout`'s glyph frames into the same screen
+            // space `flame` is already in — see the doc comment on `tick`.
+            fire.tick(dt: dt, flame: flame, layout: layout, origin: textOrigin, reduceMotion: reduceMotion)
             updateFeedback()
 
             if settling == nil, fire.hasBurnedEverything(in: layout) {

@@ -126,6 +126,39 @@ final class FireModelTests: XCTestCase {
         XCTAssertLessThan(fire.heat(at: 0), FireModel.consumed)
     }
 
+    /// Pins the seam none of the other tests exercise: `flame` is a screen-space
+    /// point (from a drag gesture), while a glyph's frame is in the layout's own
+    /// space — `(0, 0)` at the top of the text block, not wherever that block is
+    /// centred on screen. `ComposeView` is what joins the two, by passing the same
+    /// `origin` it hands `BurnCanvas` for drawing. Every other test above builds
+    /// `flame` and `layout` in the same space by construction, so a regression
+    /// here — comparing them without `origin` — would sail through every one of
+    /// them while breaking the app outright: the flame would visibly sit on a
+    /// letter and nothing would ever catch, exactly as shipped once.
+    func testFlameAndGlyphAgreeOnlyOnceOriginIsApplied() {
+        let layout = row("a")
+        let glyphLocal = CGPoint(x: layout.glyphs[0].frame.midX, y: layout.glyphs[0].frame.midY)
+        // A stand-in for `ComposeView.textOrigin`: text sits well below the
+        // layout's own (0, 0), as it does whenever it is vertically centred in a
+        // box taller than itself.
+        let origin = CGPoint(x: 0, y: 285)
+        let flameOnScreen = CGPoint(x: origin.x + glyphLocal.x, y: origin.y + glyphLocal.y)
+
+        var withoutOrigin = FireModel()
+        withoutOrigin.reset(glyphCount: layout.glyphs.count)
+        run(&withoutOrigin, seconds: 1, flame: flameOnScreen, layout: layout)
+        XCTAssertEqual(withoutOrigin.heat(at: 0), 0,
+                       "documents the shipped bug: without origin this looks 285pt away, nowhere near the 46pt radius")
+
+        var withOrigin = FireModel()
+        withOrigin.reset(glyphCount: layout.glyphs.count)
+        for _ in 0..<60 {
+            withOrigin.tick(dt: 1.0 / 60.0, flame: flameOnScreen, layout: layout, origin: origin)
+        }
+        XCTAssertGreaterThan(withOrigin.heat(at: 0), 0,
+                             "with origin applied, a flame that is visibly on the glyph should actually ignite it")
+    }
+
     func testHeatNeverExceedsConsumed() {
         let layout = row("a")
         var fire = FireModel()

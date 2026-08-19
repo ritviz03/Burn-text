@@ -112,13 +112,25 @@ struct FireModel {
 
     /// Advances the fire by `dt` seconds.
     ///
-    /// - Parameter flame: where the flame tip is, in the layout's coordinate
-    ///   space, or `nil` when the user is not touching the screen. Characters
-    ///   already alight carry on either way.
+    /// - Parameters:
+    ///   - flame: where the flame tip is on screen, or `nil` when the user is not
+    ///     touching. Characters already alight carry on either way.
+    ///   - layout: glyph frames in the *layout's own* space — `(0, 0)` at the top
+    ///     of the laid-out text, regardless of where that text is centred on
+    ///     screen.
+    ///   - origin: where the layout's `(0, 0)` lands on screen — the same value
+    ///     the view passes to `BurnCanvas` to draw it in the right place. Without
+    ///     this, `flame` (screen space) and a glyph's frame (layout space) are not
+    ///     comparable: whenever the text is not pinned to the screen's top-left,
+    ///     the flame would visibly touch a letter while this method kept
+    ///     measuring the distance to a phantom copy of the text sitting wherever
+    ///     the untranslated layout would place it — silently never igniting
+    ///     anything.
     mutating func tick(
         dt: Double,
         flame: CGPoint?,
         layout: GlyphLayout,
+        origin: CGPoint = .zero,
         reduceMotion: Bool = false
     ) {
         guard dt > 0 else { return }
@@ -137,7 +149,7 @@ struct FireModel {
             if value >= Self.consumed { continue }
 
             if let flame {
-                let centre = CGPoint(x: glyph.frame.midX, y: glyph.frame.midY)
+                let centre = CGPoint(x: origin.x + glyph.frame.midX, y: origin.y + glyph.frame.midY)
                 let dx = Double(flame.x - centre.x)
                 let dy = Double(flame.y - centre.y)
                 let distance = (dx * dx + dy * dy).squareRoot()
