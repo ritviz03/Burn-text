@@ -8,12 +8,15 @@ under your finger.
 The burn is the whole point, so it gets the most engineering attention: the fire
 follows your hand rather than playing a canned animation.
 
+Nothing is saved, anywhere. There is no journal, no history, no account, no
+network call in the app at all. Burn it and it is gone.
+
 ---
 
 ## Requirements
 
 - macOS with **Xcode 15+**
-- **iOS 17+** target (needed for SwiftData and the SwiftUI APIs used here)
+- **iOS 17+** target (needed for the SwiftUI APIs used here)
 - A **physical device** to feel the haptics — they are silent on the Simulator
 - No third-party dependencies. Everything is first-party Apple frameworks.
 
@@ -36,7 +39,7 @@ Then set your team under **Signing & Capabilities** (or fill in
 <summary>No XcodeGen? Build the project by hand</summary>
 
 1. Xcode ▸ File ▸ New ▸ Project ▸ **iOS App**
-2. Name it `Burn`, Interface **SwiftUI**, Storage **SwiftData**, min deployment **iOS 17**
+2. Name it `Burn`, Interface **SwiftUI**, min deployment **iOS 17** (leave Storage as **None** — nothing here persists anything)
 3. Delete the generated `ContentView.swift` and `BurnApp.swift`
 4. Drag the `Burn/` folder into the project (Create groups, add to the `Burn` target)
 5. Drag `BurnTests/` into a new **Unit Testing Bundle** target
@@ -54,15 +57,13 @@ Apple Developer Program.
 
 ```
 Burn/
-├─ BurnApp.swift              @main; builds the SwiftData container
-├─ RootView.swift             the one screen, plus journal + settings sheets
-├─ Models/ReleasedThought     @Model — text + timestamp, on device only
+├─ BurnApp.swift              @main
+├─ RootView.swift             the one screen, plus a settings sheet
 ├─ Views/
 │  ├─ ComposeView             Write/Burn modes, the frame loop, the drag
 │  ├─ BurnCanvas              draws every character at its own heat, plus embers
 │  ├─ MatchStick              the draggable match; FlameShape
-│  ├─ JournalView             what's been let go; swipe to delete
-│  └─ SettingsView            sound, haptics, keep-a-journal, clear
+│  └─ SettingsView            sound, haptics
 ├─ Components/
 │  ├─ FontFitter              measures + binary searches the largest fitting size
 │  └─ GlyphLayout             per-character frames, with word wrapping
@@ -100,14 +101,15 @@ a clock — so the app keeps a simulation and advances it every frame.
    with a dynamic parameter, so the rumble tracks how much is alight while staying
    on CoreHaptics' own clock. `SoundPlayer` loops the crackle the same way and
    fades out when the last character goes.
-7. When every non-whitespace character is consumed, the thought is recorded and
-   the page resets to the prompt. Embers get ~0.9s to finish first.
+7. When every non-whitespace character is consumed, the page resets to the
+   prompt. Embers get ~0.9s to finish first. Nothing is saved — the thought is
+   just gone.
 
 Whitespace is laid out but never drawn or burned — setting fire to a space should
 not count as progress, and requiring it would mean a burn never completes.
 
 With nothing typed, the prompt itself is what burns. It is the quickest way to
-learn the gesture, and it is never journalled: it was not anybody's thought.
+learn the gesture.
 
 ### Tuning knobs
 
@@ -137,17 +139,14 @@ Run through this once on real hardware:
 - [ ] Haptics track how much is burning and stop when it is out (device only).
 - [ ] Sound loops while burning, fades when it stops, sits under the room, and
       respects the ring/silent switch.
-- [ ] Burn everything → the thought lands in **Journal** and the prompt returns.
-- [ ] Burn the prompt itself without typing → nothing is journalled.
+- [ ] Burn everything → the prompt returns. Nothing is saved anywhere.
 - [ ] Tap **Write** mid-burn — the fire resets and the keyboard comes back.
-- [ ] Turn **Keep a journal** off — burning saves nothing.
 - [ ] Turn sound and haptics off — the burn is silent and still.
 - [ ] Settings ▸ **Reduce Motion** on → text still burns, no flying embers.
 
 Unit tests (`⌘U`) cover the wrapping and centring in `GlyphLayout`, the whole
 `FireModel` simulation (ignition, self-sustain, spread limits, ember caps, frame
-clamping), the font-fitting search, and SwiftData save/delete. How it *looks* is
-verified by eye.
+clamping), and the font-fitting search. How it *looks* is verified by eye.
 
 ### Performance note
 

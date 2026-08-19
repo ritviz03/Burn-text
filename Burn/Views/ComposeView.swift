@@ -2,7 +2,6 @@
 //  ComposeView.swift
 //
 
-import SwiftData
 import SwiftUI
 
 /// Write a thought, then burn it with a match you drag across the words.
@@ -18,12 +17,10 @@ import SwiftUI
 struct ComposeView: View {
     private enum Mode { case writing, burning }
 
-    @Environment(\.modelContext) private var modelContext
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @AppStorage(Setting.soundEnabled) private var soundEnabled = true
     @AppStorage(Setting.hapticsEnabled) private var hapticsEnabled = true
-    @AppStorage(Setting.keepsJournal) private var keepsJournal = true
 
     @State private var text = ""
     @State private var mode: Mode = .writing
@@ -47,7 +44,7 @@ struct ComposeView: View {
 
     private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
     /// With nothing typed, the prompt itself is what burns — the quickest way to
-    /// learn the gesture. It is never journalled; it was not anybody's thought.
+    /// learn the gesture.
     private var isPlaceholder: Bool { trimmed.isEmpty }
     private var displayText: String { isPlaceholder ? Self.prompt : trimmed }
 
@@ -231,7 +228,6 @@ struct ComposeView: View {
             updateFeedback()
 
             if settling == nil, fire.hasBurnedEverything(in: layout) {
-                record()
                 settling = reduceMotion ? 0.25 : 0.9
             }
             if var remaining = settling {
@@ -267,12 +263,6 @@ struct ComposeView: View {
 
     // MARK: - Finishing
 
-    private func record() {
-        guard keepsJournal, !isPlaceholder else { return }
-        modelContext.insert(ReleasedThought(text: displayText, releasedAt: .now))
-        try? modelContext.save()
-    }
-
     private func finish() {
         stopFeedback()
         flame = nil
@@ -288,6 +278,5 @@ struct ComposeView: View {
     NavigationStack {
         ComposeView()
     }
-    .modelContainer(for: ReleasedThought.self, inMemory: true)
     .preferredColorScheme(.dark)
 }

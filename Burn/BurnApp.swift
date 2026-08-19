@@ -2,7 +2,6 @@
 //  BurnApp.swift
 //
 
-import SwiftData
 import SwiftUI
 
 @main
@@ -11,6 +10,5 @@ struct BurnApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: ReleasedThought.self)
     }
 }

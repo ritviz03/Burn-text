@@ -11,5 +11,4 @@ import Foundation
 enum Setting {
     static let soundEnabled = "settings.soundEnabled"
     static let hapticsEnabled = "settings.hapticsEnabled"
-    static let keepsJournal = "settings.keepsJournal"
 }
